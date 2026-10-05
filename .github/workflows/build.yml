@@ -1,0 +1,80 @@
+name: Acer T482L Full ROM Compiler via GDrive
+
+on:
+  workflow_dispatch: # Allows you to manually click a button on GitHub to start the build
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: Free Local Disk Space
+      run: |
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift
+        sudo rm -rf /usr/local/share/powershell /etc/client.keys /opt/az
+        docker rmi $(docker images -q) 2>/dev/null || true
+        sudo apt-get clean
+
+    - name: Install Android Build Dependencies & Rclone
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib \
+        gcc-multilib git gnupg gperf lib32readline-dev lib32z1-dev liblz4-tool \
+        libncurses5-dev libsdl1.1-dev libssl-dev libxml2 libxml2-utils lzop pngcrush \
+        rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 rclone
+
+    - name: Configure Rclone Connection
+      run: |
+        mkdir -p ~/.config/rclone
+        cat <<EOF > ~/.config/rclone/rclone.conf
+        ${{ secrets.RCLONE_CONFIG_DATA }}
+        EOF
+
+    - name: Restore Previous Cache from Google Drive
+      run: |
+        mkdir -p ~/.ccache
+        echo "Downloading compiled progress from Google Drive..."
+        rclone copy gdrive:T482L_Build_Cache ~/.ccache || true
+
+    - name: Shallow Sync LineageOS Source
+      run: |
+        git config --global user.name "Builder"
+        git config --global user.email "builder@local.host"
+        mkdir lineage && cd lineage
+        repo init -u https://github.com -b lineage-20.0 --depth=1
+        
+        # Injecting your custom Acer trees into the manifest workspace
+        mkdir -p .repo/local_manifests
+        cat <<EOF > .repo/local_manifests/t482l.xml
+        <?xml version="1.0" encoding="UTF-8"?>
+        <manifest>
+          <project path="device/acer/T482L" name="codebht/Android_device_acer_t482l" remote="github" revision="main" />
+          <project path="vendor/T482L" name="codebht/android_vendor_T482L" remote="github" revision="main" />
+        </manifest>
+        EOF
+        repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags
+
+    - name: Compile and Cache Build Execution
+      run: |
+        cd lineage
+        export USE_CCACHE=1
+        export CCACHE_DIR=~/.ccache
+        ccache -M 45G # Cap compilation files safely under GitHub's ceiling limit
+        
+        source build/envsetup.sh
+        
+        # Target your device tree configurations
+        lunch lineage_T482L-userdebug || lunch lineage_t482l-userdebug
+        
+        # Build the full ROM zip (bacon target)
+        mka bacon -j$(nproc --all) || echo "Workflow milestone or disk limit hit, uploading progress cache..."
+
+    - name: Save Updated Cache Back to Google Drive
+      if: always()
+      run: |
+        echo "Saving progress back to your 5TB Google Drive..."
+        rclone copy ~/.ccache gdrive:T482L_Build_Cache
+        
+        echo "Checking for finished full ROM zip to save..."
+        rclone copy lineage/out/target/product/T482L/*.zip gdrive:Acer_T482L_Output/ || true
+        
