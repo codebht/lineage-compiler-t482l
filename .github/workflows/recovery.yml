@@ -1,0 +1,72 @@
+name: Acer T482L Lineage Recovery Compiler
+
+on:
+  workflow_dispatch: # Allows you to manually click a button on GitHub to start the build
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: Maximize GitHub Runner Disk Space
+      run: |
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift
+        sudo rm -rf /usr/local/share/powershell /etc/client.keys /opt/az
+        docker rmi $(docker images -q) 2>/dev/null || true
+        sudo apt-get clean
+
+    - name: Install Android Build Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib \
+        gcc-multilib git gnupg gperf lib32readline-dev lib32z1-dev liblz4-tool \
+        libncurses5-dev libsdl1.1-dev libssl-dev libxml2 libxml2-utils lzop pngcrush \
+        rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3
+
+    - name: Set Up Git Credentials
+      run: |
+        git config --global user.name "Builder"
+        git config --global user.email "builder@local.host"
+
+    - name: Download Google Repo Tool
+      run: |
+        mkdir -p ~/bin
+        curl https://googleapis.com > ~/bin/repo
+        chmod a+x ~/bin/repo
+        echo "$HOME/bin" >> $GITHUB_PATH
+
+    - name: Shallow Sync LineageOS 20 Source
+      run: |
+        mkdir lineage
+        cd lineage
+        # Sync the core Android 13 system structure
+        repo init -u https://github.com/LineageOS/android.git -b lineage-20.0 --git-lfs --depth=1
+        
+        # Inject your custom Acer T482L device and vendor repositories
+        mkdir -p .repo/local_manifests
+        cat <<EOF > .repo/local_manifests/t482l.xml
+        <?xml version="1.0" encoding="UTF-8"?>
+        <manifest>
+          <project path="device/acer/T482L" name="codebht/Android_device_acer_t482l" remote="github" revision="main" />
+          <project path="vendor/T482L" name="codebht/android_vendor_T482L" remote="github" revision="main" />
+        </manifest>
+        EOF
+
+        repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags
+
+    - name: Compile Lineage Recovery Image
+      run: |
+        cd lineage
+        source build/envsetup.sh
+        
+        # Target your device tree configurations
+        lunch AcerOne8T482L-userdebug || lunch lineage_AcerOne8T482L-userdebug
+        
+        # Compile ONLY the recovery image
+        mka recoveryimage -j$(nproc --all)
+
+    - name: Upload Recovery Image to GitHub
+      uses: actions/upload-artifact@v4
+      with:
+        name: Acer-T482L-Recovery
+        path: lineage/out/target/product/T482L/recovery.img
