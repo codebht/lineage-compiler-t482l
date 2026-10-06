@@ -31,9 +31,15 @@ jobs:
     - name: Download Google Repo Tool
       run: |
         mkdir -p ~/bin
-        curl https://googleapis.com > ~/bin/repo
-        chmod a+x ~/bin/repo
-        echo "$HOME/bin" >> $GITHUB_PATH
+
+# 2. Download the correct, raw repo binary
+curl https://googleapis.com > ~/bin/repo
+
+# 3. Make the repo script executable
+chmod a+x ~/bin/repo
+
+# 4. Ensure ~/bin is in your PATH (if it isn't already)
+export PATH=~/bin:$PATH
 
     - name: Shallow Sync LineageOS 20 Source
       run: |
